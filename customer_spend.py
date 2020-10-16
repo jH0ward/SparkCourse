@@ -25,6 +25,12 @@ rdd_totals = rdd.reduceByKey(lambda x, y: x + y)
 
 # Sort highest total to lowest
 rdd_totals = rdd_totals.sortBy(lambda x: x[1], ascending=False)
+print(rdd_totals.collect())
+
+# Alternate method is to flip key, val and order by Key
+rdd_totals = rdd_totals.map(lambda t: (t[1], t[0])).\
+    sortByKey(ascending=False).\
+    map(lambda t: (t[1], t[0]))
 
 py_obj = rdd_totals.collect()
 
