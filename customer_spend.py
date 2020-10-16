@@ -29,5 +29,7 @@ rdd_totals = rdd_totals.sortBy(lambda x: x[1], ascending=False)
 py_obj = rdd_totals.collect()
 
 print(py_obj)
+
+# Type is list of tuples
 print(type(py_obj))
 
