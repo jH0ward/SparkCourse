@@ -8,6 +8,10 @@ def parse_line(line):
     return customer_id, spend
 
 
+def flip(t):
+    return t[1], t[0]
+
+
 # Boilerplate spark setup
 conf = SparkConf().setMaster("local[*]").setAppName("SpendByCustomer")
 sc = SparkContext(conf=conf)
@@ -28,9 +32,9 @@ rdd_totals = rdd_totals.sortBy(lambda x: x[1], ascending=False)
 print(rdd_totals.collect())
 
 # Alternate method is to flip key, val and order by Key
-rdd_totals = rdd_totals.map(lambda t: (t[1], t[0])).\
+rdd_totals = rdd_totals.map(flip).\
     sortByKey(ascending=False).\
-    map(lambda t: (t[1], t[0]))
+    map(flip)
 
 py_obj = rdd_totals.collect()
 
