@@ -39,6 +39,7 @@ movie_counts = df.groupby("movieID").count()
 
 # Create UDF to get name from id
 def get_name_from_id(_id):
+    aVar = 1
     return name_dict.value[_id]
 
 

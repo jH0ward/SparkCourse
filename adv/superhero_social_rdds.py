@@ -12,7 +12,7 @@ def parse_connect_line(_line):
     if len(ary) < 2:
         _connects = 0
     else:
-        _connects = int(ary[1])
+        _connects = len(ary[1:])
     return _id, _connects
 
 
@@ -46,6 +46,10 @@ name_dict = spark.sparkContext.broadcast(load_hero_names())
 # Read text file in and create RDD
 lines = spark.sparkContext.textFile("../data/Marvel+Graph")
 rdd = lines.map(parse_connect_line)
+
+# Will come back later and instead just read file into a dataframe (pretending file is space-separated csv)
+# with a column called value
+# Can then apply sql.functions functions like split and size
 
 print(rdd.take(5))
 
