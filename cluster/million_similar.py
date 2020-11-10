@@ -1,4 +1,5 @@
 from pyspark import SparkConf, SparkContext
+from pyspark.sql import SparkSession
 from pyspark.sql import functions as F
 import configparser
 import time
@@ -15,11 +16,11 @@ os.environ['PYSPARK_SUBMIT_ARGS'] = "--packages=org.apache.hadoop:hadoop-aws:2.7
 config = configparser.ConfigParser()
 config.read(os.path.expanduser("~/.aws/credentials"))
 access_id = config.get('default', "aws_access_key_id")
-print(access_id)
 access_key = config.get('default', "aws_secret_access_key")
 
 conf = SparkConf()
 sc = SparkContext(conf=conf)
+sc.setLogLevel("ERROR")
 hadoop_conf = sc._jsc.hadoopConfiguration()
 hadoop_conf.set("fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem")
 hadoop_conf.set("fs.s3a.access.key", access_id)
@@ -60,6 +61,41 @@ def compute_similarity(df):
     return results.select('movieID_1', 'movieID_2', 'Score', 'numPairs')
 
 
+def filter_diagonals(row):
+    movie1 = row[1][0][0]
+    movie2 = row[1][1][0]
+
+    return movie1 < movie2
+
+
+def key_by_movie_pair(row):
+    user_id = row[0]
+    movie_id_ratings_pair = row[1]
+    movie1, rating1 = movie_id_ratings_pair[0]
+    movie2, rating2 = movie_id_ratings_pair[1]
+    return (movie1, movie2), (rating1, rating2)
+
+
+def cosine_similarity(rating_pairs):
+    xx = yy = xy = 0
+    for rating_x, rating_y in rating_pairs:
+        xx += rating_x**2
+        yy += rating_y**2
+        xy += rating_x * rating_y
+    numerator = xy
+    denominator = xx**0.5 * yy**0.5
+
+    score = 0
+    if denominator:
+        score = numerator / float(denominator)
+
+    return score, len(rating_pairs)
+
+
+def show_partition_id(df, _part=0):
+    return df.select(*df.columns, F.spark_partition_id().alias("pid")).filter(F.col("pid") == _part).show()
+
+
 if __name__ == '__main__':
     t0 = time.time()
     # Load up movie names (sep | )  and broadcast it
@@ -67,11 +103,41 @@ if __name__ == '__main__':
     movieNames = load_movie_name('../data/ml-1m/movies.dat')
 
     # Read in movie ratings
-    # Load up movie data (sep \t)
-    rdd_ratings = load_movie_ratings('s3a://coleman-spark/ml-1m/ratings.dat')
+    rdd_ratings = sc.parallelize(load_movie_ratings('s3a://coleman-spark/ml-1m/ratings.dat').take(10000))
+    # Partitioning should help the expensive self-join to follow
     ratingsPartitioned = rdd_ratings.partitionBy(100)
-    joinedRatings = ratingsPartitioned.join(ratingsPartitioned)
-    print(joinedRatings.take(10))
 
-    tf = time.time()
-    print(f'Finished program in {tf - t0} seconds')
+    # self-join and get an RDD with elements like (userid, ( (movie1, rating1), (movie2, rating2) ) )
+    joinedRatings = ratingsPartitioned.join(ratingsPartitioned)
+
+    # Use a function to filter the rdd removing duplicates
+    uniqueJoinedRatings = joinedRatings.filter(filter_diagonals)
+
+    # Key by (movie1, movie2) now instead
+    moviePairs = uniqueJoinedRatings.map(key_by_movie_pair)
+
+    print(moviePairs.count())
+
+    # https://www.oreilly.com/library/view/learning-spark/9781449359034/ch04.html
+    # groupByKey() creates another RDD with all the values grouped to same key in a list
+    # So then the mapValues will apply func to a list
+    similarScores = moviePairs.groupByKey().mapValues(cosine_similarity)
+
+    similarScores = similarScores.sortBy(lambda x: -1*x[1][1])
+
+    spark = SparkSession(sc)
+    similarScores = similarScores.map(lambda x: (x[0][0], x[0][1], x[1][0], x[1][1])).\
+        toDF(["movie1", "movie2", "score", "numPairs"])
+    print(similarScores.rdd.getNumPartitions())
+    similarScores.show(10, False)
+    show_partition_id(similarScores, 1)
+
+    # tmp = similarScores.take(10)
+    # print(type(tmp))
+    # for i, t in enumerate(tmp):
+    #     if i == 0:
+    #         print(type(t))
+    #     print(t)
+
+    # tf = time.time()
+    # print(f'Finished program in {tf - t0} seconds')
